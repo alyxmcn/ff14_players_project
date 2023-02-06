@@ -1,0 +1,494 @@
+---
+title: "Разведочный анализ"
+author: "Alexey Machikhin"
+date: "5/22/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+```
+
+#### Загрузка данных
+```{r}
+library(readr)
+```
+
+```{r}
+ff_df = read_csv("data/ff_data.csv")
+```
+
+#### Разведочный анализ
+
+##### Альфа Кронбаха для индексов
+
+```{r}
+library(psych)
+```
+
+```{r}
+df_raw = read_csv("data/ff_data_raw.csv")
+```
+
+```{r}
+# альфы кронбаха для мотиваторов
+alphas_soc = alpha(df_raw[c("m_soc_1", "m_soc_2", "m_soc_3")])
+summary(alphas_soc) # 0.72 - good
+alphas_complet = alpha(df_raw[c("m_complet_1", "m_complet_2", "m_complet_3")])
+summary(alphas_complet) # 0.72 - good
+alphas_compet = alpha(df_raw[c("m_compet_1", "m_compet_2", "m_compet_3")])
+summary(alphas_compet) # 0.81 - pretty good
+alphas_esc = alpha(df_raw[c("m_esc_1", "m_esc_2")])
+summary(alphas_esc) # 0.67 - acceptable (в оригинальном исследовании было 0.63)
+alphas_story = alpha(df_raw[c("m_story_1", "m_story_2")])
+summary(alphas_story) # 0.84 - pretty good
+```
+
+```{r}
+# альфа кронбаха для индекса чувства сообщества
+alphas_comfeel = alpha(df_raw[c("comfeel_1", "comfeel_2", "comfeel_3", "comfeel_4")])
+summary(alphas_comfeel) # 0.88 - pretty good
+```
+
+```{r}
+# альфа кронбаха для индекса дискриминации
+alphas_disc = alpha(df_raw[c("disc_1", "disc_2", "disc_3", "disc_4")])
+summary(alphas_disc) # 0.82 - pretty good
+```
+
+```{r}
+# альфа кронбаха для СУБ
+alphas_disc = alpha(df_raw[c("swb_1", "swb_2", "swb_3", "swb_4", "swb_5")])
+summary(alphas_disc) # 0.90 - excelent 
+```
+
+##### Игровое время 
+
+**Отличаются ли два показателя времмени друг от друга?**
+```{r}
+par(mfrow = c(1,2), pty = "s")
+hist(ff_df$time, main = "", xlab = "игровое время в неделю\n (субъективная оценка)",
+     ylab = "частота")
+hist(ff_df$time_2,  main = "", xlab = "игровое время в неделю\n (объективная оценка)", 
+     ylab = "частота") 
+# ненормальные распредления - использовать непараметрический критерий
+```
+
+```{r}
+wilcox.test(ff_df$time, ff_df$time_2, paired = T) # выборка парная, потому что это две различные оценки игрового времени в неделю одних и тех же людей
+```
+
+```{r}
+par(mfrow = c(1,2), pty = "s")
+boxplot(ff_df$time, xlab = "игровое время в неделю\n (субъективная оценка)",
+        col = "lightsalmon")
+boxplot(ff_df$time_2, xlab = "игровое время в неделю\n (объективная оценка)",
+        col = "lightblue2")
+```
+```{r}
+mean(ff_df$time)
+mean(ff_df$time_2)
+```
+- нет различая в оценках времени (p-value = 0.38)
+- разница средних в двух распределениях минимальна (чуть меньше чем на 2 часа разница в оценках)
+- можно использовать оценки игрового времени в неделю, предоставленные респондентами в ответах
+
+**Различается ли игровое время для мужчин и женщин?**
+```{r}
+class(ff_df$gender) # нужно перекодировать
+ff_df$gender = as.factor(ff_df$gender)
+table(ff_df$gender) # категории выделены правильно
+```
+
+```{r}
+library(RColorBrewer)
+library(dplyr)
+```
+
+```{r}
+ff_df$gndr_ru = dplyr::recode(ff_df$gender,
+                       'Female' = "Женский",
+                       'Male' = "Мужской",
+                       'Other' = "Другой",
+                       'Prefer not to say' = "Предпочитаю не говорить")
+```
+
+```{r}
+table(ff_df$gender)
+table(ff_df$gndr_ru)
+```
+
+```{r}
+plot(x = ff_df$gndr_ru, y = ff_df$time, 
+     col = brewer.pal(n = 4, name = "Set2"),
+     xlab = "Гендер",
+     ylab = "Игровое время (час/нед)") # игровое время может совсем незначительно отличаться в зависимости от гендера
+```
+```{r}
+shapiro.test(ff_df$time[ff_df$gender == "Female"])
+shapiro.test(ff_df$time[ff_df$gender == "Male"])
+shapiro.test(ff_df$time[ff_df$gender == "Other"])
+shapiro.test(ff_df$time[ff_df$gender == "Prefer not to say"])
+```
+```{r}
+library(car)
+```
+
+```{r}
+par(mfrow= c(2,2))
+qqPlot(ff_df$time[ff_df$gender == "Female"])
+qqPlot(ff_df$time[ff_df$gender == "Male"])
+qqPlot(ff_df$time[ff_df$gender == "Other"])
+qqPlot(ff_df$time[ff_df$gender == "Prefer not to say"])
+# в целом ненормальные распределения
+# использую тест Краскела-Уолеса
+```
+
+```{r}
+kruskal.test(ff_df$time ~ ff_df$gender) # нет различия между игровым временем в неделю в зависимости от различной гендерной идентичности
+```
+
+##### Зависимая переменная - СУБ
+
+**Распредление зависимой**
+```{r}
+par(mfrow = c(1,2), pty = "s")
+hist(ff_df$swb, col = "lightblue", main = "", xlab = "субъективное благополучие",
+     ylab = "частота")
+plot(density(ff_df$swb), main = "",  xlab = "субъективное благополучие",
+     ylab = "плотность")
+# распределения слегка смещены вправо, нужен формальный тест
+```
+
+```{r}
+describe(ff_df$swb)
+# skewness: -0.23 значит практически нет смещения
+# kurtosis: -0.75 значит есть проблема с коэфициентом эксцесса
+```
+
+
+```{r}
+shapiro.test(ff_df$swb) # отличается от нормального распределения
+```
+
+- распределение отличается от номального (но незначительно визуально)
+- МНК-регрессии устойчивы к незначительным отклонениям от нормальности распредления
+
+*Отличается ли СУБ в зависимости от гендера*
+```{r}
+plot(x = ff_df$gndr_ru, y = ff_df$swb, col = brewer.pal(n = 4, name = "Set2"),
+     xlab = "Гендер",
+     ylab = "Субъективное благополучие") # видно, что СУБ может значительно различаться в зависимости от гендера
+```
+```{r}
+shapiro.test(ff_df$swb[ff_df$gender == "Female"])
+shapiro.test(ff_df$swb[ff_df$gender == "Male"])
+shapiro.test(ff_df$swb[ff_df$gender == "Other"])
+shapiro.test(ff_df$swb[ff_df$gender == "Prefer not to say"])
+# для мужчин и женщин распределение СУБ отличается от нормального, использую тест Краскела Уоллиса
+```
+```{r}
+par(mfrow= c(2,2))
+qqPlot(ff_df$swb[ff_df$gender == "Female"])
+qqPlot(ff_df$swb[ff_df$gender == "Male"])
+qqPlot(ff_df$swb[ff_df$gender == "Other"])
+qqPlot(ff_df$swb[ff_df$gender == "Prefer not to say"])
+```
+
+```{r}
+kruskal.test(ff_df$swb ~ ff_df$gender) # есть значимое отличие (p-value < 0.001)
+```
+```{r}
+library(FSA)
+```
+
+```{r}
+dunnTest(ff_df$swb, ff_df$gender, method = "bonferroni")
+```
+
+*Значимые различия между категориями:*
+
+- Female и Other
+- Male и Other
+- Male и Prefer not to say
+
+*Однако размер эффекта оказался маленьким*
+
+```{r}
+library(dplyr)
+library(rstatix)
+```
+
+```{r}
+# размер эффекта --------
+ff_df %>% kruskal_effsize(swb ~ gender) # маленький (eta squared = 0.03)
+```
+
+```{r}
+library(ggstatsplot)
+```
+
+```{r}
+ggbetweenstats(data = ff_df,
+               x = gndr_ru,
+               y = swb,
+               type = "nonparametric", 
+               var.equal = F, 
+               plot.type = "box",
+               pairwise.comparisons = TRUE,
+               pairwise.display = "significant",
+               centrality.plotting = FALSE,
+               bf.message = FALSE,
+               xlab = "Гендер",
+               ylab = "Субъективное благополучие")
+```
+
+**Различается ли СУБ в зависимости от частоты игры в FFXIV?**
+```{r}
+class(ff_df$FF_freq) # нужно перекодировать в факторную переменную
+ff_df$FF_freq = as.factor(ff_df$FF_freq)
+table(ff_df$FF_freq) # перекодировалось правильно
+```
+
+```{r}
+plot(x = ff_df$FF_freq, y = ff_df$swb, col = brewer.pal(n = 4, name = "Set2")) # медианы примерно на одном уровне. Возможно, различий не будет
+```
+
+```{r}
+shapiro.test(ff_df$swb[ff_df$FF_freq == "only"])
+shapiro.test(ff_df$swb[ff_df$FF_freq == "mostly"])
+shapiro.test(ff_df$swb[ff_df$FF_freq == "equally"])
+shapiro.test(ff_df$swb[ff_df$FF_freq == "least"])
+# распределения отличаются от нормального, использую непараметрический критерий
+```
+```{r}
+par(mfrow=c(2,2))
+qqPlot(ff_df$swb[ff_df$FF_freq == "only"])
+qqPlot(ff_df$swb[ff_df$FF_freq == "mostly"])
+qqPlot(ff_df$swb[ff_df$FF_freq == "equally"])
+qqPlot(ff_df$swb[ff_df$FF_freq == "least"])
+```
+
+```{r}
+kruskal.test(ff_df$swb ~ ff_df$FF_freq)
+```
+
+```{r}
+ff_df$FF_freq_ru = dplyr::recode(ff_df$FF_freq,
+                          'only' = "только",
+                          'mostly' = "по большей части",
+                          'equally' = "наравне",
+                          'least' = "по меньшей части")
+table(ff_df$FF_freq)
+table(ff_df$FF_freq_ru)
+```
+
+```{r}
+ggbetweenstats(data = ff_df,
+               x = FF_freq_ru,
+               y = swb,
+               type = "nonparametric", 
+               var.equal = F, 
+               plot.type = "box",
+               pairwise.comparisons = TRUE,
+               pairwise.display = "significant",
+               centrality.plotting = FALSE,
+               bf.message = FALSE,
+               xlab = "Насколько часто играете в FFXIV по сравнению с другими онлайн-играми ?",
+               ylab = "Субъективное благополучие")
+```
+
+- нет значимых различий в уровне СУБ в зависимости от того, насколько часто респонденты играют именно в FFXIV
+
+##### Независимые переменные: распределения и зависимости
+```{r}
+par(mfrow=c(2,3))
+# распределения индексов мотиваторов -------
+hist(ff_df$m_soc, col = 0, main = "", ylab = "частота", xlab = 'мотиватор "socializers"')
+hist(ff_df$m_complet, col = 0, main = "", ylab = "частота", xlab = 'мотиватор "completionists"')
+hist(ff_df$m_compet, col = 0, main = "", ylab = "частота", xlab = 'мотиватор "competitors"')
+hist(ff_df$m_esc, col = 0, main = "", ylab = "частота", xlab = 'мотиватор "escapists"')
+hist(ff_df$m_story, col = 0, main = "", ylab = "частота", xlab = 'мотиватор "story-driven"')
+# распределения сильно отличаются от нормального
+```
+```{r}
+# распределения ирового опыта в годах -----
+hist(ff_df$years_total, col = 0, main = "", ylab = "частота", xlab = "игровой опыт (в годах)")
+# отличается от нормального
+```
+```{r}
+# распредление индекса чувства сообщества
+hist(ff_df$comfeel, col = 0, main = "", ylab = "частота", xlab = "чувство сообщества (индекс)")
+# отличается от нормального
+```
+```{r}
+# распредление индекса дискриминации
+hist(ff_df$disc, col = 0, main = "", ylab = "частота", xlab = "опыт дискриминации (индекс)")
+# отличается от нормального
+```
+```{r}
+# распредление возраста
+par(mfrow=c(1,2), pty = "s")
+hist(ff_df$age, col = 0, main = "", ylab = "частота", xlab = "возраст")
+qqPlot(ff_df$age)
+shapiro.test(ff_df$age) # отличается от нормального, но визуально похоже
+```
+
+```{r}
+library(cowplot)
+library(gridGraphics)
+```
+
+```{r}
+# Зависимости между мотиваторами и СУБ
+scatterplot(ff_df$swb ~ ff_df$m_soc, boxplots = "", col = 1,
+            xlab = 'мотиватор "socializers"', ylab = "субъективное благополучие")
+rec1 = recordPlot() 
+scatterplot(ff_df$swb ~ ff_df$m_complet, boxplots = "", col = 1,
+            xlab = 'мотиватор "completionists"', ylab = "субъективное благополучие")
+rec2 = recordPlot()
+scatterplot(ff_df$swb ~ ff_df$m_compet, boxplots = "", col = 1,
+            xlab = 'мотиватор "competitors"', ylab = "субъективное благополучие")
+rec3 = recordPlot()
+scatterplot(ff_df$swb ~ ff_df$m_esc, boxplots = "", col = 1,
+            xlab = 'мотиватор"escapists"', ylab = "субъективное благополучие")
+rec4 = recordPlot()
+scatterplot(ff_df$swb ~ ff_df$m_story, boxplots = "", col = 1,
+            xlab = 'мотиватор "story-driven"', ylab = "субъективное благополучие")
+rec5 = recordPlot()
+# plot_grid(rec1, rec2, rec3, rec4, rec5, ncol = 2)
+# мотиватор "story_driven" - связь м/б нелинейной
+```
+
+```{r}
+# зависимости между игровым игровым временем, игровым опытом и СУБ
+scatterplot(ff_df$swb ~ ff_df$time, boxplots = "", col = 1,
+            xlab = "игровое время (час/нед)", ylab = "субъективное благополучие")
+rec01 = recordPlot() 
+scatterplot(ff_df$swb ~ ff_df$years_total, boxplots = "", col = 1,
+            xlab = "игровой опыт (в годах)", ylab = "субъективное благополучие")
+rec02 = recordPlot() # возможна нелинейная связь
+#plot_grid(rec01, rec02)
+```
+
+```{r}
+# зависимость между индексом чувства сообщества и СУБ
+scatterplot(ff_df$swb ~ ff_df$comfeel, boxplots = "", col = 1,
+            xlab = "чувство сообщества", ylab = "субъективное благополучие")
+```
+
+```{r}
+# зависимость между индексом дискриминации и СУБ -------
+scatterplot(ff_df$swb ~ ff_df$disc, boxplots = "", col = 1,
+            xlab = "опыт дискриминации", ylab = "субъективное благополучие")
+# связь м/б нелинейна
+```
+
+```{r}
+# зависимость между возрастом и СУБ
+scatterplot(ff_df$swb ~ ff_df$age, boxplots = "", col = 1,
+            xlab = "возраст", ylab = "субъективное благополучие")
+```
+
+```{r}
+class(ff_df$eng) # нужно перекодировать
+ff_df$eng = as.factor(ff_df$eng)
+table(ff_df$eng) # перекодировалось правильно
+```
+
+```{r}
+# зависимость между знанием языка и СУБ
+boxplot(ff_df$swb ~ ff_df$eng) # визуально нет разницы
+```
+
+```{r}
+shapiro.test(ff_df$swb[ff_df$eng == "Yes"])
+shapiro.test(ff_df$swb[ff_df$eng == "No"])
+```
+
+```{r}
+ff_df$eng_ru = dplyr::recode(ff_df$eng, 'Yes' = "Да", 'No' = "Нет")
+table(ff_df$eng)
+table(ff_df$eng_ru)
+```
+
+```{r}
+ggbetweenstats(data = ff_df,
+               x = eng_ru,
+               y = swb,
+               type = "nonparametric", 
+               var.equal = F, 
+               plot.type = "box",
+               pairwise.comparisons = TRUE,
+               pairwise.display = "significant",
+               centrality.plotting = FALSE,
+               bf.message = FALSE,
+               xlab = "Свободно владеете английским?",
+               ylab = "Субъективное благополучие")
+# нет разницы
+```
+
+##### Анализ корреляций
+```{r}
+library(sjPlot)
+```
+
+```{r}
+tab_corr(ff_df[c("time", "years_total", "m_soc", "m_complet", "m_compet", 
+                 "m_esc", "m_story", "comfeel", "disc", "swb", "age")], 
+         corr.method = "kendall", na.deletion = "pairwise")
+```
+
+
+##### Описательная статистика (таблица)
+```{r}
+library(kableExtra)
+```
+
+```{r}
+desc
+```
+
+```{r}
+# таблица с описательной статистикой для количественных данных --------
+desc = describe(ff_df[c("time", "years_total", "m_soc", "m_complet",
+                        "m_compet", "m_esc", "m_story", "comfeel",
+                        "disc", "swb", "age")]) 
+desc %>% select(n, mean, median, sd, min, max, skew, kurtosis) %>% kbl(digits = 2) %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria")
+```
+
+```{r}
+library(lessR)
+```
+
+```{r}
+# круговые диаграммы  для категориальных показателей -------
+PieChart(gender, hole = 0, values = "%", data = ff_df,
+         fill = brewer.pal(4, "Set2"))
+```
+
+```{r}
+PieChart(FF_freq, hole = 0, values = "%", data = ff_df,
+         fill = brewer.pal(4, "Set2"))
+```
+
+```{r}
+PieChart(eng, hole = 0, values = "%", data = ff_df,
+         fill = brewer.pal(4, "Set2"))
+```
+
+##### Сохранение итогового датафрейма 
+
+```{r}
+df_to_save = ff_df[c("time", "FF_freq", "years_total", "m_soc", "m_complet",
+                        "m_compet", "m_esc", "m_story", "comfeel",
+                        "disc", "swb", "age", "gender", "eng",
+                     "gndr_ru", "FF_freq_ru", "eng_ru")] 
+```
+
+```{r}
+write.csv(df_to_save,"data\\ff14.csv", row.names = FALSE, fileEncoding = "UTF-8")
+```
