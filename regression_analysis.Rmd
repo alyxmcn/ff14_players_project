@@ -1,0 +1,535 @@
+---
+title: "Regression analysis"
+author: "Alexey Machikhin"
+date: "5/23/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+```
+
+#### Загрузка итогового датасета
+```{r}
+library(readr)
+library(car)
+library(sjPlot)
+library(MASS)
+library(olsrr)
+library(sjmisc)
+library(ggpubr)
+library(fitdistrplus)
+library(cowplot)
+```
+
+```{r}
+df = read_csv("data/ff14.csv") 
+```
+
+#### Сравнение моделей. Отбор мотиваторов на основе критерия Фишера
+
+```{r}
+df$FF_freq = as.factor(df$FF_freq)
+table(df$FF_freq)
+df$gender = as.factor(df$gender)
+table(df$gender)
+df$eng = as.factor(df$eng)
+table(df$eng)
+```
+
+```{r}
+# изменю опорную категорию в переменной со сравнением частоты игры на тех, кто меньше всего играет в FFXIV
+df$FF_freq = relevel(df$FF_freq, ref = "least")
+```
+
+```{r}
+# модель без мотиваторов ------
+m_null = lm(swb ~ time + FF_freq + gender + age + eng + comfeel + disc, data = df)
+summary(m_null)
+```
+
+```{r}
+# добавление мотиватора soc
+m_s <- update(m_null, . ~ . + m_soc)
+summary(m_s)
+anova(m_null, m_s) # мотиватор soc не улучшает модель
+```
+
+```{r}
+# добавление мотиватора complet
+m_cmplt <- update(m_null, . ~ . + m_complet)
+summary(m_cmplt)
+anova(m_null, m_cmplt) # не сильно добавляет модели описательности, мотиватор не значим на уровне alpha = 5%
+```
+
+```{r}
+# добавление мотиватора compet
+m_cmpt <- update(m_null, . ~ . + m_compet)
+summary(m_cmpt)
+anova(m_null, m_cmpt) # m_compet значимо улучшает модель - добавляю
+```
+
+```{r}
+# добавление мотиватора escapists
+m_cmpt_esc <- update(m_cmpt, . ~ . + m_esc)
+summary(m_cmpt_esc)
+anova(m_cmpt, m_cmpt_esc) # m_esc значимо улучшает модель - добавляю
+vif(m_cmpt_esc) # не образуется мультикол. между мотиваторами
+```
+
+```{r}
+# добавление мотиватора story
+m_cmpt_esc_story <- update(m_cmpt_esc, . ~ . + m_story)
+summary(m_cmpt_esc_story)
+anova(m_cmpt_esc, m_cmpt_esc_story) # мотиватор story не улучшает модель - не добавляю
+```
+
+- *В итоге в модель будут добавлены только два мотиватора: competitors и escapists, так как они значимо улучшают модель*
+
+```{r}
+# моель с мотиваторами - финал --------
+mod_motivators = m_cmpt_esc
+```
+
+#### Модель без эффектов взаимодейсвия. Диагностика
+
+```{r}
+mod_fit = mod_motivators
+```
+
+```{r}
+# распределения остатков для модели с мотиваторами ------
+ols_test_normality(mod_fit) 
+# распредление остатков отличается от нормального распредления
+```
+
+```{r}
+qqPlot(mod_fit) # не сильно отличается от нормального распредления визуально
+```
+
+```{r}
+# тест на выбросы для mod soc -------
+outlierTest(mod_fit, n.max = 10) # 7 - можно удалить 
+```
+
+```{r}
+# Leverages (outlying predictors) ----------------
+head(hatvalues(mod_fit))
+plot(hatvalues(mod_fit))
+#(2,3)*((k+1)/n), k - number of IVs (number of beta-coefficients), n - sample size,
+abline(h=c(2,3)*14/457,lty=2)
+text(hatvalues(mod_fit), rownames(df))
+# много наблюдений - влиятельные 
+# 403 и 32 - возможно удалить
+```
+
+```{r}
+# Cook’s distance for model with motivators ------
+plot(cooks.distance(mod_fit))
+text(cooks.distance(mod_fit), labels = rownames(df))
+#4/(n-k-1), k - number of IVs (number of beta-coefficients), n - sample size, 
+abline(h=4/(457-13-1), lty=2)
+# множество наблюдений превышают жесткий порог рассмтояния Кука
+# 7, 32, 87, 347, 422
+```
+
+```{r}
+plot(hatvalues(mod_fit), rstudent(mod_fit), type='n')
+#thresholds for residuals
+abline(h=c(-2, 2), lty=2)
+#thresholds for leverages
+abline(v=c(2,3)*14/457, lty=2)
+cook <- sqrt(cooks.distance(mod_fit))
+points(hatvalues(mod_fit), rstudent(mod_fit), cex=10*cook/max(cook))
+text(hatvalues(mod_fit), rstudent(mod_fit), rownames(df))
+# наблюдения не сильно выходят за пределы двух сигм, однако некоторые очень сильно превышаю пороговое значение Кука
+```
+
+```{r}
+# df betas для модели с мотиваторами -----
+dfbs<- dfbetas(mod_fit)
+head(dfbs)
+plot(dfbs[,c(2,3)], pch = 16)
+abline(v=0, lty=2)
+abline(h=0, lty=2)
+text(dfbs[,2] + 0.02, dfbs[,3], labels=row.names(df), cex = 0.5)
+# есть сильное отклонени
+# 7 наблюдение - однозначно сильно отклоняет
+```
+
+```{r}
+# Heteroscedasticity for mod with motivators --------
+par(mfrow = c(1, 2))
+plot(fitted.values(mod_fit), rstudent(mod_fit))
+abline(h=0, lty=2) 
+spreadLevelPlot(mod_fit) 
+# нет признаков явной гетероскедастичности
+```
+
+```{r}
+# formal test 
+ncvTest(mod_fit) 
+# в модели с мотиваторами нет гетероскедастичности -------
+```
+
+```{r}
+# Non-linearity
+# if lambda close to 0 - log
+boxcox(mod_fit, data = df) # lambda is close to 1, no transformation necessary -------
+```
+
+```{r}
+# линейность связей --------
+scatterplot(swb ~ time, data = df)
+scatterplot(swb ~ m_esc, data = df)
+scatterplot(swb ~ m_compet, data = df)
+scatterplot(swb ~ comfeel, data = df)
+scatterplot(swb ~ disc, data = df) # мб нелинейна связь
+scatterplot(swb ~ age, data = df)
+```
+
+```{r}
+boxTidwell(swb ~ time + m_esc, data = df) # no log trans
+boxTidwell(swb ~ m_compet + comfeel + disc + age, data = df)
+# disc - нужно логарифмировать переменную в модели -------
+```
+
+```{r}
+vif(mod_fit)
+# нет мультиколлинеарности -----
+```
+
+#### Построение модели после диагностики
+
+```{r}
+# удаление выбросов и влиятельных наблюдений----
+df_new = df[-which(rownames(df)=="7"|
+                   rownames(df)=="422"|
+                   rownames(df)=="403"|
+                   rownames(df)=="32"), ]
+```
+
+```{r}
+# построение финальной модели
+mod_fin = lm(swb ~ m_esc + m_compet + comfeel + log(disc) 
+             + time + FF_freq + gender + age + eng,
+             data = df_new)
+```
+
+```{r}
+#summary(mod_fin)
+```
+
+```{r}
+# распределения остатков для финальной модели ------
+ols_test_normality(mod_fin) 
+# распредление остатков все равно отличается от нормального 
+```
+
+```{r}
+par(mfrow=c(1,2), pty = "s")
+qqPlot(mod_fin) # совсем не сильно отличается от нормального распредления визуально
+hist(mod_fin$residuals)
+```
+
+```{r}
+# тест на выбросы для финальной модели -------
+outlierTest(mod_fin, n.max = 10) # 385 - можно удалить 
+```
+
+```{r}
+# Leverages (outlying predictors) ----------------
+head(hatvalues(mod_fin))
+plot(hatvalues(mod_fin))
+#(2,3)*((k+1)/n), k - number of IVs (number of beta-coefficients), n - sample size,
+abline(h=c(2,3)*14/453,lty=2)
+text(hatvalues(mod_fin), rownames(df_new))
+# 336
+```
+
+```{r}
+# Cook’s distance for final model  ------
+plot(cooks.distance(mod_fin))
+text(cooks.distance(mod_fin), labels = rownames(df_new))
+#4/(n-k-1), k - number of IVs (number of beta-coefficients), n - sample size, 
+abline(h=4/(453-13-1), lty=2)
+# 85
+```
+
+```{r}
+plot(hatvalues(mod_fin), rstudent(mod_fin), type='n')
+#thresholds for residuals
+abline(h=c(-2, 2), lty=2)
+#thresholds for leverages
+abline(v=c(2,3)*14/453, lty=2)
+cook <- sqrt(cooks.distance(mod_fin))
+points(hatvalues(mod_fin), rstudent(mod_fin), cex=10*cook/max(cook))
+text(hatvalues(mod_fin), rstudent(mod_fin), rownames(df_new))
+# наблюдения не сильно выходят за пределы двух сигм, однако некоторые  сильно превышаю пороговое значение Кука
+```
+
+```{r}
+# df betas для финальной модели -----
+dfbs<- dfbetas(mod_fin)
+head(dfbs)
+plot(dfbs[,c(2,3)], pch = 16)
+abline(v=0, lty=2)
+abline(h=0, lty=2)
+text(dfbs[,2] + 0.02, dfbs[,3], labels=row.names(df_new), cex = 0.5)
+# теперь наблюдения не меняют оценку параметров
+```
+
+```{r}
+# Heteroscedasticity for final mod --------
+par(mfrow = c(1, 2))
+plot(fitted.values(mod_fin), rstudent(mod_fin))
+abline(h=0, lty=2) 
+spreadLevelPlot(mod_fin) 
+# нет признаков явной гетероскедастичности
+```
+
+```{r}
+# formal test 
+ncvTest(mod_fin) 
+# в финальной моделе нет гетероскедастичности -------
+```
+
+```{r}
+# Non-linearity for final model --------
+# if lambda close to 0 - log
+boxcox(mod_fin, data = df_new) # lambda is close to 1, no transformation necessary -------
+```
+
+```{r}
+# линейность связей --------
+scatterplot(swb ~ time, data = df_new)
+scatterplot(swb ~ m_esc, data = df_new)
+scatterplot(swb ~ m_compet, data = df_new)
+scatterplot(swb ~ comfeel, data = df_new)
+scatterplot(swb ~ log(disc), data = df_new) # теперь связь линейна
+scatterplot(swb ~ age, data = df_new)
+```
+
+```{r}
+boxTidwell(swb ~ time, data = df_new) # no log trans
+boxTidwell(swb ~ m_esc, data = df_new)
+boxTidwell(swb ~ m_compet + comfeel + age, data = df_new)
+```
+
+```{r}
+vif(mod_fin)
+# нет мультиколлинеарности -----
+```
+
+- **Несмотря на наличие нескольких влиятельных наблюдений, остальные ограничения МНК-регрессии не нарушаются: остатки распредлены нормально, нет мультиколлинеарности и гетероскедостичности.**
+- **Более того, влиятельные наблюдения в лучшей версии модели не изменяют оценки параметров.**
+
+#### Интерпретация финальной модели subjective well-being
+```{r}
+tab_model(mod_fin, show.ci=F,
+          pred.labels = c("(Константа)", 'мотиватор "escapists"', 'мотиватор "competitors"',
+                          "чувство сообщества", "опыт дискриминации (log)", 
+                          "игровое время (час/нед)","FFXIV: наравне",
+                          "FFXIV: по большей части", "FFXIV: только", 
+                          "гендер: М", "гендер: Другое",
+                          "гендер: Не скажу", "возраст", "свободный англ: Да"),
+          dv.labels = "субъективное благополучие", 
+          string.est = "β", 
+          string.p = "p-value", 
+          string.pred = "Предикторы")
+```
+**Влияние мотиваторов на уровень СУБ**
+- С повышением индекса мотивации "Escapists" на 1 балл уровень СУБ понижается на 1.05 баллов.
+- H3 подтвердилась, повышение значении мотивации в эскапизме дейсвительно негативно связано с уровнем удовлетворенностью жизни.
+- С повышением индекса мотивации "Competitors" на 1 балл уровень СУБ повышается на 0.75 баллов.
+- Не было предусмотрено гипотезами. 
+
+**Влияние чувства сообщества онлйан**
+- С повышением индекса чувства сообщества на 1 балл уровень СУБ повышается на 1.27 баллов.
+- H4 также подтвердилась
+- Ограничение вывода: вероятно, опрос могли проходить люди, которые изначально чувствовали большую связь с сообществом игроков FFXIV. 
+- С другой стороны, это может быть осоенностью конкретной игры и даже жанра ММОРПГ в целом. В ММОРПГ геймплейные элементы создают большие возможности для социальной игры по сравнению с другими жанрами (особенно MOBA). 
+
+**Влияние испытываемого опыта социальной дискриминации в FFXIV**
+- Повышение оценки опыта дискриминации на 1% сопровождается понижением уровня СУБ на 4.66/100=0.05 балла
+- H5 подтвердилась
+- Вероятно, это особенность жанра. Играя в ММОРПГ, пользователи в большей степени погружаются в виртуальный мир (создание и отыгрывание персонажа, долгие совместные преключения - практически вторая полноценная жизнь). Конексты "виртуальной" и "реальной" жизни могут смешиваться. 
+
+**Влияние игрового времени**
+- Повышение игрового времени не связано с СУБ.
+- Удивительно, но вопроеки H1, игровое время не влияет на удовлетворенность жизнью игроков.
+
+**Влияние гендера**
+- Для мужских и женских игроков нет различий в уровне СУБ.
+- Однако по сравнению с женскими игроками, те кто указал отличный гендер в среднем имеют уровень СУБ меньше на 7.02 баллов. 
+- И по сравнению с женскими игроками, те, ксто предпочел не уазывать свой гендер ни в какой форме, также имеют уровень СУБ в среднем меньший на 4.13 баллов. 
+
+**Влияние возраста**
+- С повышением возраста игроков на 1 год уровень СУБ повышается на 0.12 баллов.
+
+#### Визуализация итоговой модели для СУБ
+```{r}
+pl1 = plot_model(mod_fin, type = "pred",
+           terms = "m_esc",
+           title = "",
+           axis.title = c('мотиватор "escapists"', "субъективное благополучие")) + 
+           theme_sjplot() 
+pl2 = plot_model(mod_fin, type = "pred",
+           terms = "m_compet",
+           title = "",
+           axis.title = c('мотиватор "competitors"', "субъективное благополучие")) + 
+           theme_sjplot()
+pl3 = plot_model(mod_fin, type = "pred",
+           terms = "comfeel",
+           title = "",
+           axis.title = c('чувство сообщества', "субъективное благополучие")) + 
+           theme_sjplot() 
+pl4 = plot_model(mod_fin, type = "pred",
+           terms = "disc",
+           title = "",
+           axis.title = c('опыт дискриминации в FFXIV', "субъективное благополучие")) + 
+           theme_sjplot() 
+```
+
+```{r}
+cowplot::plot_grid(pl1, pl2)
+cowplot::plot_grid(pl3, pl4)
+```
+
+```{r}
+df_new3 = df_new
+df_new3$FF_freq_ru = as.factor(df_new3$FF_freq_ru)
+df_new3$FF_freq_ru = relevel(df_new3$FF_freq_ru, ref = "по меньшей части")
+mod_fin2 = lm(swb ~ time + m_compet + m_esc + log(disc) + FF_freq_ru + gender + age + eng, data = df_new3)
+pl5 = plot_model(mod_fin2, type = "pred",
+           terms = "FF_freq_ru",
+           title = "",
+           axis.title = c('Насколько часто играете в FFXIV по сравнению с другими онлайн-играми?', "субъективное благополучие")) +
+           theme_sjplot() 
+```
+
+```{r}
+# errorbars for FFXIV_freq -------
+ggerrorplot(data = df_new3,
+            x = 'FF_freq_ru',
+            y = 'swb', 
+            add = "mean", 
+            error.plot = "errorbar",
+            ggtheme = theme_bw(),
+            xlab = 'Насколько часто играете в FFXIV по сравнению с другими онлайн-играми?',
+            ylab = 'субъективное благополучие')
+```
+
+- Наблюдается  разница в размахе данных вокруг среднего значения в четырех подвыборках.
+- В первой категории данные в большей степени отличаются от среднего по сравнению с тремя другими.
+- Категория "Играю наименьше всего в FFXIV по сравнению с другими онлайн-играми" включает в себя всего лишь 3% наблюдений из набора данных, поэтому наблюдается значительная разница в том, насколько точно средние репрезентуют данные в выборках. 
+
+
+```{r}
+# errorbars for gender -------
+ggerrorplot(data = df_new3,
+            x = 'gender',
+            y = 'swb', 
+            error.plot = "errorbar",
+            add = "mean",
+            ggtheme = theme_bw(),
+            xlab = 'Гендер',
+            ylab = 'субъективное благополучие')
+```
+
+#### Представление в виде вложенных моделей
+
+```{r}
+# иерархическая регрессия --------
+tab_model(m_null, m_cmpt, m_cmpt_esc, show.ci = F, 
+          pred.labels = c("(Константа)","игровое время (час/нед)", "чувство сообщества", 
+                          "опыт дискриминации", "FFXIV: наравне", 
+                          "FFXIV: по большей части", "FFXIV: только", 
+                          "гендер: М", "гендер: Другое",
+                          "гендер: Не скажу", "возраст", "свободный англ: Да",
+                          'мотиватор "competitors"', 
+                          'мотиватор "escapists"'),
+          dv.labels = c("(1)", "(2)", "(3)"), 
+          string.est = "β", 
+          string.p = "p-value", 
+          string.pred = "Предикторы")
+```
+
+```{r}
+# модель без мотиваторов ------
+m_null = lm(swb ~ time + FF_freq + gender + age + eng + comfeel + log(disc), data = df)
+#summary(m_null)
+```
+
+```{r}
+# добавление мотиватора compet
+m_cmpt <- update(m_null, . ~ . + m_compet)
+#summary(m_cmpt)
+```
+
+```{r}
+# добавление мотиватора escapists
+m_cmpt_esc <- update(m_cmpt, . ~ . + m_esc)
+#summary(m_cmpt_esc)
+```
+
+```{r}
+mod_fin_tab = lm(swb ~ time + FF_freq + gender + age + eng + comfeel + log(disc) + m_compet + m_esc, data = df_new)
+```
+
+```{r}
+# иерархическая регрессия для финальной модели --------
+tab_model(m_null, m_cmpt, mod_fin_tab, show.ci = F, 
+          pred.labels = c("(Константа)","игровое время (час/нед)", 
+                          "FFXIV: по большей части", "FFXIV: только","FFXIV: наравне", 
+                          "гендер: М", "гендер: Другое",
+                          "гендер: Не скажу", "возраст", "свободный англ: Да", 
+                          "чувство сообщества", 
+                          "опыт дискриминации [log]",
+                          'мотиватор "competitors"', 
+                          'мотиватор "escapists"'),
+          dv.labels = c("(1)", "(2)", "(3)"),
+          string.est = "β", 
+          string.p = "p-value", 
+          string.pred = "Предикторы")
+```
+
+```{r}
+par(mfrow=c(2,2), s = 'pty')
+plot(mod_fin_tab)
+```
+
+#### Добавление эффектов взаимодейсвия
+
+```{r}
+mod_int_esc = lm(swb ~ comfeel + disc + FF_freq + gender + age + eng + time*m_esc, data = df_new)
+mod_int_soc = lm(swb ~ comfeel + disc + FF_freq + gender + age + eng + time*m_soc, data = df_new)
+mod_int_compet = lm(swb ~ comfeel + disc + FF_freq + gender + age + eng + time*m_compet, data = df_new)
+summary(mod_int_esc)
+summary(mod_int_soc)
+summary(mod_int_compet)
+```
+
+```{r}
+vif(mod_int_esc)
+vif(mod_int_soc)
+vif(mod_int_compet)
+```
+
+- Мотивация не оказывает эффект модерации на связь между игровым временем и СУБ.
+
+```{r}
+mod_int_disc = lm(swb ~ time + m_compet + comfeel*disc + FF_freq + gender + age + eng, data = df_new)
+summary(mod_int_disc)
+```
+
+```{r}
+tab_model(mod_int_esc, mod_int_soc, mod_int_compet, show.ci = F)
+```
+
+
+- Опыт дискриминации не оказывает эффект модерации на связь между чувством сообщества и СУБ.
+
+
